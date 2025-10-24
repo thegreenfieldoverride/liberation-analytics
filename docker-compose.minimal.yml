@@ -1,4 +1,4 @@
-version: '3.8'
+# Docker Compose file for Liberation Analytics
 
 # Minimal Liberation Analytics setup with just PostgreSQL + DuckDB
 # Perfect for getting started quickly with 2 Hetzner volumes
@@ -16,7 +16,7 @@ services:
       - DATABASE_URL=postgres://liberation:${POSTGRES_PASSWORD}@postgres:5432/liberation_analytics
       - GIN_MODE=release
     volumes:
-      - /mnt/analytics-volume:/app/data
+      - /mnt/analytics-volume/data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
     volumes:
-      - /mnt/postgres-volume:/var/lib/postgresql/data
+      - /mnt/postgres-volume/data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U liberation -d liberation_analytics"]
@@ -56,6 +56,6 @@ networks:
     name: liberation-network
 
 # Note: This minimal setup uses only 2 Hetzner volumes:
-# - /mnt/analytics-volume (DuckDB analytical data)
-# - /mnt/postgres-volume (PostgreSQL transactional data)
-# Redis can be added later for caching and rate limiting
+# - /mnt/analytics-volume/data (DuckDB analytical data)
+# - /mnt/postgres-volume/data (PostgreSQL transactional data)
+# Using subdirectories avoids PostgreSQL lost+found issues
