@@ -57,7 +57,7 @@ jobs:
           sleep 5
           
           # Test health endpoint
-          if curl -f http://localhost:8080/health; then
+          if curl -f http://localhost:8080/api/health; then
             echo "✅ Analytics service started successfully"
           else
             echo "❌ Analytics service failed to start"
