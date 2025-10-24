@@ -1,8 +1,10 @@
-# Liberation Analytics Service
-FROM golang:alpine AS builder
+# Liberation Analytics Service - Use Debian base for glibc compatibility
+FROM golang:1.23-bullseye AS builder
 
-# Install build dependencies for CGO and DuckDB (requires C++)
-RUN apk add --no-cache gcc g++ musl-dev libc-dev make
+# Install build dependencies for CGO and DuckDB
+RUN apt-get update && apt-get install -y \
+    gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -11,12 +13,16 @@ RUN go mod download
 COPY *.go ./
 RUN ls -la && go version && CGO_ENABLED=1 GOOS=linux go build -v -o liberation-analytics
 
-# Production image
-FROM alpine:latest
+# Production image - Use Debian slim for glibc compatibility
+FROM debian:bullseye-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
-RUN update-ca-certificates
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    tzdata \
+    wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
 
 # Create app directory
 WORKDIR /app
