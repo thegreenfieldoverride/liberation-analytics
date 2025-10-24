@@ -1,0 +1,28 @@
+# Go binaries
+liberation-analytics
+*.exe
+*.so
+*.dylib
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# GeoIP database (download separately)
+*.mmdb
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.local

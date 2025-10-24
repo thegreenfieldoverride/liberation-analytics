@@ -1,0 +1,142 @@
+name: 🚀 Liberation Analytics Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options: 
+          - staging
+          - production
+        default: staging
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: thegreenfieldoverride/liberation-analytics
+
+jobs:
+  test:
+    name: 🧪 Test Liberation Analytics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binary
+        run: CGO_ENABLED=1 go build -o liberation-analytics ./main.go
+
+      - name: Test binary startup
+        run: |
+          ./liberation-analytics &
+          ANALYTICS_PID=$!
+          sleep 5
+          
+          # Test health endpoint
+          if curl -f http://localhost:8080/health; then
+            echo "✅ Analytics service started successfully"
+          else
+            echo "❌ Analytics service failed to start"
+            exit 1
+          fi
+          
+          kill $ANALYTICS_PID
+
+  build-and-push:
+    name: 🐳 Build & Push Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: 🚀 Deploy Liberation Analytics
+    needs: [test, build-and-push]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    
+    steps:
+      - name: Set deployment variables
+        run: |
+          if [ "${{ github.event.inputs.environment || 'staging' }}" = "production" ]; then
+            echo "DEPLOY_PORT=8080" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=liberation-analytics-production" >> $GITHUB_ENV
+            echo "ENVIRONMENT=production" >> $GITHUB_ENV
+            echo "IMAGE_TAG=main" >> $GITHUB_ENV
+          else
+            echo "DEPLOY_PORT=8081" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=liberation-analytics-staging" >> $GITHUB_ENV
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+            echo "IMAGE_TAG=main" >> $GITHUB_ENV
+          fi
+
+      - name: Deploy to Liberation Server
+        run: |
+          echo "🚀 Deploying Liberation Analytics to ${{ env.ENVIRONMENT }}..."
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          echo "🔗 Port: ${{ env.DEPLOY_PORT }}"
+          
+          # This will be implemented when we have the server integration
+          echo "✅ Liberation Analytics deployment ready"
+          echo "🔗 Will be available at: analytics.greenfieldoverride.com"
