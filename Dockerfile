@@ -1,5 +1,5 @@
 # Liberation Analytics Service - Use Debian base for glibc compatibility
-FROM golang:1.23-bullseye AS builder
+FROM golang:bullseye AS builder
 
 # Install build dependencies for CGO and DuckDB
 RUN apt-get update && apt-get install -y \
