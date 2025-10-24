@@ -1,8 +1,8 @@
 # Liberation Analytics Service
 FROM golang:alpine AS builder
 
-# Install build dependencies for CGO and DuckDB
-RUN apk add --no-cache gcc musl-dev libc-dev make
+# Install build dependencies for CGO and DuckDB (requires C++)
+RUN apk add --no-cache gcc g++ musl-dev libc-dev make
 
 WORKDIR /app
 COPY go.mod go.sum ./
