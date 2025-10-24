@@ -213,3 +213,12 @@ nano .env  # Set POSTGRES_PASSWORD and other config
 ---
 
 **Built for the liberation movement** - Measure freedom, not surveillance.
+
+## 🌐 Live Deployment
+
+Liberation Analytics is deployed at: **https://analytics.greenfieldoverride.com**
+
+Test the API:
+```bash
+curl https://analytics.greenfieldoverride.com/api/health
+```
