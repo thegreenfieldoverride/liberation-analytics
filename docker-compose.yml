@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  liberation-analytics:
+    build: .
+    container_name: liberation-analytics
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=production
+      - DUCKDB_PATH=/app/data/analytics.db
+      - DATABASE_URL=postgres://liberation:${POSTGRES_PASSWORD}@postgres:5432/liberation_analytics
+      - GIN_MODE=release
+    volumes:
+      - /mnt/analytics-volume:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - liberation
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: liberation-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=liberation_analytics
+      - POSTGRES_USER=liberation
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - /mnt/postgres-volume:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liberation -d liberation_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - liberation
+
+  redis:
+    image: redis:7-alpine
+    container_name: liberation-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - /mnt/redis-volume:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - liberation
+
+networks:
+  liberation:
+    driver: bridge
+    name: liberation-network
+
+# Note: Volumes are Hetzner Block Storage mounted at /mnt/*
+# This file assumes volumes are already created and mounted

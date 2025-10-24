@@ -171,11 +171,37 @@ The analytics service provides aggregate insights:
 
 ## 🌍 Production Deployment
 
-1. **Build**: `go build -o liberation-analytics`
-2. **Deploy**: Run on your liberation infrastructure
-3. **SSL**: Put behind reverse proxy (Caddy/nginx)
-4. **GeoIP**: Download GeoLite2-Country.mmdb for geographic insights
-5. **Monitor**: Health endpoint at `/api/health`
+### Prerequisites
+1. **Hetzner Block Storage volumes** (3 volumes for persistent data)
+2. **Docker & Docker Compose** installed on server
+3. **Environment configuration** (copy .env.example to .env)
+
+### Quick Deploy
+```bash
+# 1. Setup volumes (first time only)
+./scripts/setup-volumes.sh
+
+# 2. Create and mount Hetzner volumes
+# (see volume creation commands in your Hetzner console)
+
+# 3. Configure environment
+cp .env.example .env
+nano .env  # Set POSTGRES_PASSWORD and other config
+
+# 4. Deploy
+./scripts/deploy.sh
+```
+
+### Architecture
+- **PostgreSQL**: Sessions, API tokens, real-time events
+- **DuckDB**: Analytical aggregations and insights  
+- **Redis**: Session cache and rate limiting
+- **Hetzner volumes**: Persistent data storage
+
+### Monitoring
+- **Health**: `curl http://localhost:8080/api/health`
+- **Logs**: `docker-compose logs -f liberation-analytics`
+- **Status**: `docker-compose ps`
 
 ## 🚀 Future Features
 
