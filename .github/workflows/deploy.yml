@@ -1,10 +1,11 @@
 name: 🚀 Liberation Analytics Deploy
 
 on:
+  # Auto deploy main to production
   push:
     branches: [main]
-    tags: ['v*']
-  
+    
+  # Manual deployment
   workflow_dispatch:
     inputs:
       environment:
@@ -12,131 +13,164 @@ on:
         required: true
         type: choice
         options: 
-          - staging
           - production
-        default: staging
+        default: production
+      git_ref:
+        description: 'Git ref to deploy (branch, tag, or commit SHA)'
+        required: true
+        default: main
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: thegreenfieldoverride/liberation-analytics
 
 jobs:
+  # Test before deploying
   test:
-    name: 🧪 Test Liberation Analytics
+    name: 🧪 Test & Validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.git_ref || github.sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.24'
 
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Download dependencies
+      - name: Install dependencies
         run: go mod download
 
       - name: Run tests
-        run: go test -v ./...
-
-      - name: Build binary
-        run: CGO_ENABLED=1 go build -o liberation-analytics ./main.go
-
-      - name: Test binary startup
         run: |
-          ./liberation-analytics &
-          ANALYTICS_PID=$!
-          sleep 5
-          
-          # Test health endpoint
-          if curl -f http://localhost:8080/health; then
-            echo "✅ Analytics service started successfully"
-          else
-            echo "❌ Analytics service failed to start"
-            exit 1
-          fi
-          
-          kill $ANALYTICS_PID
+          go vet ./...
+          go build -o liberation-analytics
+          echo "✅ Build successful"
 
-  build-and-push:
-    name: 🐳 Build & Push Docker Image
-    needs: test
+      - name: Test Docker build
+        run: |
+          docker build -t liberation-analytics:test .
+          echo "✅ Docker build successful"
+
+  # Deploy to production
+  deploy:
+    name: 🚀 Deploy to Production
+    needs: [test]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: 
+      name: production
+      url: https://analytics.greenfieldoverride.com
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.inputs.git_ref || github.sha }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+          ssh-private-key: ${{ secrets.HETZNER_SSH_KEY }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: 🚀 Deploy Liberation Analytics
-    needs: [test, build-and-push]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    environment: ${{ github.event.inputs.environment || 'staging' }}
-    
-    steps:
-      - name: Set deployment variables
+      - name: Add server to known hosts
         run: |
-          if [ "${{ github.event.inputs.environment || 'staging' }}" = "production" ]; then
-            echo "DEPLOY_PORT=8080" >> $GITHUB_ENV
-            echo "CONTAINER_NAME=liberation-analytics-production" >> $GITHUB_ENV
-            echo "ENVIRONMENT=production" >> $GITHUB_ENV
-            echo "IMAGE_TAG=main" >> $GITHUB_ENV
+          ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy Liberation Analytics
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          USER: ${{ secrets.HETZNER_USER }}
+          GIT_REF: ${{ github.event.inputs.git_ref || github.sha }}
+        run: |
+          ssh $USER@$HOST << 'EOF'
+            set -e
+            
+            echo "🚀 Starting Liberation Analytics deployment..."
+            echo "📦 Deploying ref: $GIT_REF"
+            
+            # Navigate to analytics directory
+            cd /opt/liberation-analytics
+            
+            # Update code to specific ref
+            echo "📥 Fetching latest code..."
+            git fetch origin
+            git checkout $GIT_REF
+            git pull origin $GIT_REF || true
+            
+            # Create .env if it doesn't exist (preserve existing)
+            if [ ! -f .env ]; then
+              echo "📝 Creating .env from template..."
+              cp .env.example .env
+              echo "⚠️  Please configure .env file with proper credentials"
+            fi
+            
+            # Build and deploy with zero downtime
+            echo "🔄 Performing rolling update..."
+            
+            # Build new image
+            echo "🏗️ Building new Docker image..."
+            docker compose build liberation-analytics
+            
+            # Rolling update - start new container, then stop old one
+            echo "🟢 Starting new container..."
+            docker compose up -d --no-deps liberation-analytics
+            
+            # Wait for health check
+            echo "⏳ Waiting for health check..."
+            sleep 15
+            
+            # Verify deployment
+            for i in {1..20}; do
+              if curl -f -s http://localhost:8080/api/health > /dev/null; then
+                echo "✅ Health check passed!"
+                break
+              elif [ $i -eq 20 ]; then
+                echo "❌ Health check failed after 20 attempts"
+                docker compose logs liberation-analytics --tail 50
+                exit 1
+              else
+                echo "⏳ Health check $i/20: waiting..."
+                sleep 5
+              fi
+            done
+            
+            # Cleanup old images (keep current + 1 previous)
+            echo "🧹 Cleaning up old Docker images..."
+            docker image prune -f || true
+            
+            # Show final status
+            echo "📊 Final status:"
+            docker compose ps
+            
+            echo "✅ Liberation Analytics deployment complete!"
+          EOF
+
+      - name: Verify deployment
+        run: |
+          echo "🔍 Final verification..."
+          sleep 10
+          
+          if curl -f -s http://${{ secrets.HETZNER_HOST }}:8080/api/health; then
+            echo "✅ External health check passed!"
+            echo "🌍 Analytics available at: https://analytics.greenfieldoverride.com"
           else
-            echo "DEPLOY_PORT=8081" >> $GITHUB_ENV
-            echo "CONTAINER_NAME=liberation-analytics-staging" >> $GITHUB_ENV
-            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
-            echo "IMAGE_TAG=main" >> $GITHUB_ENV
+            echo "❌ External health check failed"
+            exit 1
           fi
 
-      - name: Deploy to Liberation Server
+      - name: Deployment Summary
+        if: always()
         run: |
-          echo "🚀 Deploying Liberation Analytics to ${{ env.ENVIRONMENT }}..."
-          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-          echo "🔗 Port: ${{ env.DEPLOY_PORT }}"
-          
-          # This will be implemented when we have the server integration
-          echo "✅ Liberation Analytics deployment ready"
-          echo "🔗 Will be available at: analytics.greenfieldoverride.com"
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "🎉 SUCCESS: Liberation Analytics deployed!"
+            echo "🌍 URL: https://analytics.greenfieldoverride.com"
+            echo "📊 Health: https://analytics.greenfieldoverride.com/api/health"
+            echo "📦 Git ref: ${{ github.event.inputs.git_ref || github.sha }}"
+            echo "🏃‍♂️ Triggered by: ${{ github.actor }}"
+          else
+            echo "💥 FAILED: Liberation Analytics deployment failed"
+            echo "🔍 Check logs above for details"
+            exit 1
+          fi

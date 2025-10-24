@@ -172,36 +172,58 @@ The analytics service provides aggregate insights:
 ## 🌍 Production Deployment
 
 ### Prerequisites
-1. **Hetzner Block Storage volumes** (3 volumes for persistent data)
+1. **Hetzner Block Storage volumes** (2 volumes for persistent data)
 2. **Docker & Docker Compose** installed on server
-3. **Environment configuration** (copy .env.example to .env)
+3. **Environment configuration** (auto-created from template)
 
-### Quick Deploy
+### 🚀 Super Simple Deployment
 ```bash
-# 1. Setup volumes (first time only)
-./scripts/setup-volumes.sh
-
-# 2. Create and mount Hetzner volumes
-# (see volume creation commands in your Hetzner console)
-
-# 3. Configure environment
-cp .env.example .env
-nano .env  # Set POSTGRES_PASSWORD and other config
-
-# 4. Deploy
-./scripts/deploy.sh
+# Clone and deploy in one command
+git clone https://github.com/thegreenfieldoverride/liberation-analytics.git
+cd liberation-analytics
+make deploy
 ```
 
-### Architecture
+### 📋 Available Commands
+```bash
+make deploy    # Zero-downtime production deployment
+make status    # Show current status
+make health    # Check health endpoint  
+make logs      # Show recent logs
+make restart   # Restart services
+make clean     # Clean up Docker resources
+make menu      # Interactive maintenance menu
+```
+
+### 🔧 Advanced Deployment
+```bash
+# Production deployment script
+./scripts/production-deploy.sh
+
+# Interactive maintenance
+./scripts/maintenance.sh
+
+# Status check
+./scripts/production-deploy.sh status
+```
+
+### 🏗️ Architecture
 - **PostgreSQL**: Sessions, API tokens, real-time events
 - **DuckDB**: Analytical aggregations and insights  
-- **Redis**: Session cache and rate limiting
-- **Hetzner volumes**: Persistent data storage
+- **Hetzner volumes**: Persistent data storage (`/mnt/analytics-volume`, `/mnt/postgres-volume`)
+- **Zero-downtime**: Rolling updates with health checks
 
-### Monitoring
-- **Health**: `curl http://localhost:8080/api/health`
-- **Logs**: `docker-compose logs -f liberation-analytics`
-- **Status**: `docker-compose ps`
+### 📊 Monitoring
+- **Health**: `make health` or `curl http://localhost:8080/api/health`
+- **Logs**: `make logs` or `docker compose logs -f`
+- **Status**: `make status`
+- **Resources**: `make docker-stats`
+
+### 🔄 CI/CD Pipeline
+- **Pull Requests**: Automatic testing (Go lint, build, Docker, security)
+- **Main branch**: Auto-deploy to production
+- **Manual deploy**: GitHub Actions UI for specific commits
+- **Branch protection**: Requires CI success before merge
 
 ## 🚀 Future Features
 
