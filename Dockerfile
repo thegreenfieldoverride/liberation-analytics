@@ -1,5 +1,5 @@
 # Liberation Analytics Service
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache gcc musl-dev
