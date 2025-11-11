@@ -1,28 +1,29 @@
-# Liberation Analytics Service - Use Debian base for glibc compatibility
-FROM golang:bullseye AS builder
+# Liberation Analytics Service
+FROM ubuntu:22.04 AS builder
 
-# Install build dependencies for CGO and DuckDB
-RUN apt-get update && apt-get install -y \
-    gcc g++ \
-    && rm -rf /var/lib/apt/lists/*
+# Install build dependencies and Go
+RUN apt-get update && \
+    apt-get install -y gcc g++ libc6-dev wget tar && \
+    wget https://go.dev/dl/go1.24.0.linux-arm64.tar.gz && \
+    tar -C /usr/local -xzf go1.24.0.linux-arm64.tar.gz && \
+    rm go1.24.0.linux-arm64.tar.gz && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY *.go ./
-RUN ls -la && go version && CGO_ENABLED=1 GOOS=linux go build -v -o liberation-analytics
+RUN CGO_ENABLED=1 GOOS=linux go build -o liberation-analytics
 
-# Production image - Use Debian slim for glibc compatibility
-FROM debian:bullseye-slim
+# Production image (same Ubuntu version)
+FROM ubuntu:22.04
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    tzdata \
-    wget \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates tzdata wget && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app

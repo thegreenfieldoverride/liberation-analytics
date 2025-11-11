@@ -171,42 +171,82 @@ The analytics service provides aggregate insights:
 
 ## 🌍 Production Deployment
 
-### Prerequisites
-1. **Hetzner Block Storage volumes** (3 volumes for persistent data)
-2. **Docker & Docker Compose** installed on server
-3. **Environment configuration** (copy .env.example to .env)
+1. **Build**: `go build -o liberation-analytics`
+2. **Deploy**: Run on your liberation infrastructure
+3. **SSL**: Put behind reverse proxy (Caddy/nginx)
+4. **GeoIP**: Download GeoLite2-Country.mmdb for geographic insights
+5. **Monitor**: Health endpoint at `/api/health`
 
-### Quick Deploy
+## 🚀 **Current Status: DEPLOYED & READY**
+
+### ✅ **Production Deployment**
+- **API URL**: https://analytics.greenfieldoverride.com/api
+- **Health Check**: https://analytics.greenfieldoverride.com/api/health  
+- **Status**: ✅ Healthy and accessible
+- **SSL/TLS**: ✅ Auto-managed by Caddy
+- **CORS**: ✅ Configured for frontend access
+
+### ✅ **Local Development Environment**
+- **Setup Command**: `./scripts/setup-local-dev.sh`
+- **Local API**: http://localhost:8080/api
+- **Environment**: Fully isolated with docker-compose.dev.yml
+
+## 🔧 **Environment Configurations**
+
+### **Production Environment**
 ```bash
-# 1. Setup volumes (first time only)
-./scripts/setup-volumes.sh
-
-# 2. Create and mount Hetzner volumes
-# (see volume creation commands in your Hetzner console)
-
-# 3. Configure environment
-cp .env.example .env
-nano .env  # Set POSTGRES_PASSWORD and other config
-
-# 4. Deploy
-./scripts/deploy.sh
+ENVIRONMENT=production
+DATABASE_URL=postgres://liberation:***@postgres:5432/liberation_analytics  
+DUCKDB_PATH=/app/data/analytics.db
+ALLOWED_ORIGINS=https://greenfieldoverride.com
 ```
 
-### Architecture
-- **PostgreSQL**: Sessions, API tokens, real-time events
-- **DuckDB**: Analytical aggregations and insights  
-- **Redis**: Session cache and rate limiting
-- **Hetzner volumes**: Persistent data storage
+### **Local Development Environment**
+```bash
+ENVIRONMENT=development
+DATABASE_URL=postgres://postgres:dev_password@postgres-dev:5432/liberation_analytics_dev
+ALLOWED_ORIGINS=http://localhost:3333,http://localhost:3000
+```
 
-### Monitoring
-- **Health**: `curl http://localhost:8080/api/health`
-- **Logs**: `docker-compose logs -f liberation-analytics`
-- **Status**: `docker-compose ps`
+## 🖥️ **Local Development Quick Start**
+
+```bash
+# 1. Setup (creates .env, starts all services)
+./scripts/setup-local-dev.sh
+
+# 2. Test local API  
+curl http://localhost:8080/api/health
+
+# 3. View logs
+docker-compose -f docker-compose.dev.yml logs -f
+```
+
+## 🔗 **Frontend Integration**
+
+Add to your frontend `.env`:
+```bash
+# Production
+NEXT_PUBLIC_ANALYTICS_URL=https://analytics.greenfieldoverride.com/api
+
+# Local Development
+NEXT_PUBLIC_ANALYTICS_URL=http://localhost:8080/api  
+```
+
+## 🛠️ **Known Issues & Next Steps**
+
+### **Current Issues**
+1. **Event ID Generation**: Backend needs to auto-generate UUIDs for events
+2. **Docker Health Check**: Container shows unhealthy despite working
+
+### **Next Steps**
+1. **Frontend Integration**: Wire useAnalytics hook to production API
+2. **Dashboard Integration**: Connect analytics dashboard component  
+3. **Enhanced Monitoring**: Add to Prometheus/Grafana stack
 
 ## 🚀 Future Features
 
 - Real-time liberation dashboard
-- Anonymous cohort analysis
+- Anonymous cohort analysis  
 - Liberation success pattern detection
 - Integration with liberation community platform
 
@@ -214,11 +254,4 @@ nano .env  # Set POSTGRES_PASSWORD and other config
 
 **Built for the liberation movement** - Measure freedom, not surveillance.
 
-## 🌐 Live Deployment
-
-Liberation Analytics is deployed at: **https://analytics.greenfieldoverride.com**
-
-Test the API:
-```bash
-curl https://analytics.greenfieldoverride.com/api/health
-```
+**Status**: 🟢 **PRODUCTION READY** - Analytics service deployed and accessible at https://analytics.greenfieldoverride.com

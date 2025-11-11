@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -39,23 +41,51 @@ func main() {
 
 	router := mux.NewRouter()
 
+	// Get allowed origins from environment, default to localhost for development
+	allowedOrigins := []string{"http://localhost:3333", "http://127.0.0.1:3333"}
+	if origins := os.Getenv("ALLOWED_ORIGINS"); origins != "" {
+		allowedOrigins = strings.Split(origins, ",")
+	}
+
 	// CORS for cross-origin requests from liberation tools
 	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"}, // In production, restrict to liberation domains
-		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders: []string{"*"},
+		AllowedOrigins: allowedOrigins,
+		AllowedMethods: []string{"GET", "POST", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Content-Type", "Authorization", "X-API-Key"},
 	})
 
-	// Routes
-	router.HandleFunc("/api/events", server.handleEvent).Methods("POST")
-	router.HandleFunc("/api/insights/usage", server.handleUsageInsights).Methods("GET")
-	router.HandleFunc("/api/insights/geographic", server.handleGeographicInsights).Methods("GET")
-	router.HandleFunc("/api/insights/financial", server.handleFinancialInsights).Methods("GET")
-	router.HandleFunc("/api/health", server.handleHealth).Methods("GET")
+	// Public routes (no authentication required)
+	public := router.PathPrefix("/api").Subrouter()
+	public.HandleFunc("/events", server.handleEvent).Methods("POST")
+
+	// Protected routes (require API token)
+	protected := router.PathPrefix("/api").Subrouter()
+	protected.Use(server.APITokenMiddleware)
+	protected.HandleFunc("/insights/usage", server.handleUsageInsights).Methods("GET")
+	protected.HandleFunc("/insights/geographic", server.handleGeographicInsights).Methods("GET")
+	protected.HandleFunc("/insights/financial", server.handleFinancialInsights).Methods("GET")
+	protected.HandleFunc("/health", server.handleHealth).Methods("GET")
+
+	// Admin routes (require admin token)
+	admin := router.PathPrefix("/api/admin").Subrouter()
+	admin.Use(server.AdminTokenMiddleware)
+	admin.HandleFunc("/tokens", server.handleCreateToken).Methods("POST")
+	admin.HandleFunc("/tokens", server.handleListTokens).Methods("GET")
+	admin.HandleFunc("/tokens/{id}", server.handleRevokeToken).Methods("DELETE")
 
 	handler := c.Handler(router)
-	log.Println("🚀 Liberation Analytics Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", handler))
+
+	// Get port from environment, default to 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("🚀 Liberation Analytics Server starting on :%s", port)
+	log.Println("📊 Public endpoints: POST /api/events")
+	log.Println("🔒 Protected endpoints: GET /api/insights/*, GET /api/health")
+	log.Println("🔐 Admin endpoints: /api/admin/tokens")
+	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
 
 func NewAnalyticsServer() (*AnalyticsServer, error) {
@@ -89,7 +119,7 @@ func NewAnalyticsServer() (*AnalyticsServer, error) {
 func (s *AnalyticsServer) initDatabase() error {
 	query := `
 	CREATE TABLE IF NOT EXISTS liberation_events (
-		id INTEGER PRIMARY KEY,
+		id VARCHAR PRIMARY KEY DEFAULT (uuid()),
 		app VARCHAR(50),
 		action VARCHAR(50),
 		attributes JSON,
@@ -99,11 +129,26 @@ func (s *AnalyticsServer) initDatabase() error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	
+	CREATE TABLE IF NOT EXISTS api_tokens (
+		id VARCHAR PRIMARY KEY DEFAULT (uuid()),
+		token_hash VARCHAR(64) UNIQUE NOT NULL,
+		name VARCHAR(100) NOT NULL,
+		permissions JSON NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		last_used TIMESTAMP,
+		expires_at TIMESTAMP,
+		is_active BOOLEAN DEFAULT true
+	);
+	
 	-- Indexes for fast analytics queries
 	CREATE INDEX IF NOT EXISTS idx_app_action ON liberation_events(app, action);
 	CREATE INDEX IF NOT EXISTS idx_timestamp ON liberation_events(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_geo_hint ON liberation_events(geo_hint);
 	CREATE INDEX IF NOT EXISTS idx_session_id ON liberation_events(session_id);
+	
+	-- Indexes for API tokens
+	CREATE INDEX IF NOT EXISTS idx_token_hash ON api_tokens(token_hash);
+	CREATE INDEX IF NOT EXISTS idx_token_active ON api_tokens(is_active);
 	`
 
 	_, err := s.db.Exec(query)
@@ -161,11 +206,9 @@ func (s *AnalyticsServer) handleUsageInsights(w http.ResponseWriter, r *http.Req
 		app,
 		action,
 		COUNT(*) as count,
-		COUNT(DISTINCT session_id) as unique_sessions,
-		DATE_TRUNC('hour', timestamp) as hour
+		COUNT(DISTINCT session_id) as unique_sessions
 	FROM liberation_events 
-	WHERE timestamp >= NOW() - INTERVAL '24 hours'
-	GROUP BY app, action, hour
+	GROUP BY app, action
 	ORDER BY count DESC
 	`
 
@@ -181,7 +224,7 @@ func (s *AnalyticsServer) handleGeographicInsights(w http.ResponseWriter, r *htt
 		COUNT(DISTINCT session_id) as unique_users
 	FROM liberation_events 
 	WHERE geo_hint IS NOT NULL 
-		AND timestamp >= NOW() - INTERVAL '7 days'
+		AND timestamp >= current_timestamp - INTERVAL 7 DAY
 	GROUP BY geo_hint, app
 	ORDER BY usage_count DESC
 	LIMIT 50
@@ -194,17 +237,17 @@ func (s *AnalyticsServer) handleFinancialInsights(w http.ResponseWriter, r *http
 	query := `
 	SELECT 
 		app,
-		JSON_EXTRACT(attributes, '$.salary_band') as salary_band,
-		JSON_EXTRACT(attributes, '$.runway_months') as runway_months,
-		JSON_EXTRACT(attributes, '$.real_wage_diff') as real_wage_diff,
+		json_extract_string(attributes, '$.salary_band') as salary_band,
+		json_extract_string(attributes, '$.runway_months') as runway_months,
+		json_extract_string(attributes, '$.real_wage_diff') as real_wage_diff,
 		COUNT(*) as count
 	FROM liberation_events 
 	WHERE action IN ('calculate', 'complete', 'reveal')
-		AND timestamp >= NOW() - INTERVAL '30 days'
+		AND timestamp >= current_timestamp - INTERVAL 30 DAY
 		AND (
-			JSON_EXTRACT(attributes, '$.salary_band') IS NOT NULL OR
-			JSON_EXTRACT(attributes, '$.runway_months') IS NOT NULL OR
-			JSON_EXTRACT(attributes, '$.real_wage_diff') IS NOT NULL
+			json_extract_string(attributes, '$.salary_band') IS NOT NULL OR
+			json_extract_string(attributes, '$.runway_months') IS NOT NULL OR
+			json_extract_string(attributes, '$.real_wage_diff') IS NOT NULL
 		)
 	GROUP BY app, salary_band, runway_months, real_wage_diff
 	ORDER BY count DESC
