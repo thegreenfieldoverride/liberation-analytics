@@ -58,20 +58,18 @@ func main() {
 	public := router.PathPrefix("/api").Subrouter()
 	public.HandleFunc("/events", server.handleEvent).Methods("POST")
 
-	// Protected routes (require API token)
-	protected := router.PathPrefix("/api").Subrouter()
-	protected.Use(server.APITokenMiddleware)
-	protected.HandleFunc("/insights/usage", server.handleUsageInsights).Methods("GET")
-	protected.HandleFunc("/insights/geographic", server.handleGeographicInsights).Methods("GET")
-	protected.HandleFunc("/insights/financial", server.handleFinancialInsights).Methods("GET")
-	protected.HandleFunc("/health", server.handleHealth).Methods("GET")
+	// Public routes (for now - auth can be added later)
+	public.HandleFunc("/insights/usage", server.handleUsageInsights).Methods("GET")
+	public.HandleFunc("/insights/geographic", server.handleGeographicInsights).Methods("GET")
+	public.HandleFunc("/insights/financial", server.handleFinancialInsights).Methods("GET")
+	public.HandleFunc("/health", server.handleHealth).Methods("GET")
 
-	// Admin routes (require admin token)
-	admin := router.PathPrefix("/api/admin").Subrouter()
-	admin.Use(server.AdminTokenMiddleware)
-	admin.HandleFunc("/tokens", server.handleCreateToken).Methods("POST")
-	admin.HandleFunc("/tokens", server.handleListTokens).Methods("GET")
-	admin.HandleFunc("/tokens/{id}", server.handleRevokeToken).Methods("DELETE")
+	// Admin routes disabled for now - can be enabled later with auth
+	// admin := router.PathPrefix("/api/admin").Subrouter()
+	// admin.Use(server.AdminTokenMiddleware)
+	// admin.HandleFunc("/tokens", server.handleCreateToken).Methods("POST")
+	// admin.HandleFunc("/tokens", server.handleListTokens).Methods("GET")
+	// admin.HandleFunc("/tokens/{id}", server.handleRevokeToken).Methods("DELETE")
 
 	handler := c.Handler(router)
 
