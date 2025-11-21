@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -188,14 +191,42 @@ func (s *AnalyticsServer) handleEvent(w http.ResponseWriter, r *http.Request) {
 func (s *AnalyticsServer) storeEvent(event LiberationEvent) error {
 	attributesJSON, _ := json.Marshal(event.Attributes)
 
+	// Generate UUID for the event
+	eventID := generateUUID()
+
 	query := `
-	INSERT INTO liberation_events (app, action, attributes, timestamp, geo_hint, session_id)
-	VALUES (?, ?, ?, ?, ?, ?)
+	INSERT INTO liberation_events (id, app, action, attributes, timestamp, geo_hint, session_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := s.db.Exec(query, event.App, event.Action, string(attributesJSON),
+	_, err := s.db.Exec(query, eventID, event.App, event.Action, string(attributesJSON),
 		event.Timestamp, event.GeoHint, event.SessionID)
 	return err
+}
+
+// generateUUID generates a UUID v4 string
+func generateUUID() string {
+	// Simple UUID v4 generation
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		// Fallback to timestamp-based ID
+		return time.Now().Format("20060102150405") + "-" + randomString(8)
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func randomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[mathrand.Intn(len(letters))]
+	}
+	return string(b)
 }
 
 func (s *AnalyticsServer) handleUsageInsights(w http.ResponseWriter, r *http.Request) {
