@@ -253,7 +253,7 @@ func (s *AnalyticsServer) handleGeographicInsights(w http.ResponseWriter, r *htt
 		COUNT(DISTINCT session_id) as unique_users
 	FROM liberation_events 
 	WHERE geo_hint IS NOT NULL 
-		AND timestamp >= current_timestamp - INTERVAL 7 DAY
+		AND timestamp >= now() - INTERVAL 7 DAYS
 	GROUP BY geo_hint, app
 	ORDER BY usage_count DESC
 	LIMIT 50
@@ -272,7 +272,7 @@ func (s *AnalyticsServer) handleFinancialInsights(w http.ResponseWriter, r *http
 		COUNT(*) as count
 	FROM liberation_events 
 	WHERE action IN ('calculate', 'complete', 'reveal')
-		AND timestamp >= current_timestamp - INTERVAL 30 DAY
+		AND timestamp >= now() - INTERVAL 30 DAYS
 		AND (
 			json_extract_string(attributes, '$.salary_band') IS NOT NULL OR
 			json_extract_string(attributes, '$.runway_months') IS NOT NULL OR
