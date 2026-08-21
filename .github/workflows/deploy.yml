@@ -162,73 +162,105 @@ jobs:
             # staging deploys. CONTAINER_NAME is templated per environment
             # precisely so the two do not collide, and the hardcoded lines
             # defeated that. A staging deploy took production down.
-            echo "🔄 Replacing ${{ env.CONTAINER_NAME }}..."
-            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-            
-            # Clean up any containers using the port
-            EXISTING_CONTAINER=$(docker ps --filter "publish=${{ env.DEPLOY_PORT }}" --format "{{.Names}}" | head -1)
-            if [ -n "$EXISTING_CONTAINER" ]; then
-              # Refuse to evict a container this deploy does not own. Whatever
-              # holds the port may be another environment, and force-removing
-              # it is how a staging run reaches production a second way.
-              if [ "$EXISTING_CONTAINER" = "${{ env.CONTAINER_NAME }}" ]; then
-                docker rm -f "$EXISTING_CONTAINER" || true
-              else
-                echo "::error::Port ${{ env.DEPLOY_PORT }} is held by '$EXISTING_CONTAINER', which this deploy does not own."
-                exit 1
-              fi
-            fi
-            
-            # Build new analytics image
+            # Build FIRST, while the old container is still serving.
+            #
+            # This used to stop and remove the container, then build. When the
+            # build failed — as it did on 2026-08-21, because the Dockerfile
+            # pinned Go 1.21.6 against a go.mod requiring 1.24 — there was
+            # nothing running and nothing to go back to, because the image
+            # prune at the end of the previous run had already deleted the
+            # only other image. Analytics was down for eight minutes for a
+            # fault that could have been caught before anything was touched.
+            #
+            # A failed build is now a no-op: the old container never stops.
             echo "🏗️ Building analytics image..."
-            docker build -t liberation-analytics:${{ env.ENVIRONMENT }}-latest .
-            
-            # Start new analytics container
+            NEW_TAG="${{ env.ENVIRONMENT }}-$(git rev-parse --short HEAD)"
+            if ! docker build -t "liberation-analytics:${NEW_TAG}" .; then
+              echo "::error::Build failed. The running container was not touched."
+              exit 1
+            fi
+            echo "✅ built liberation-analytics:${NEW_TAG}"
+
+            # Record what is currently running, by image ID, so a rollback
+            # cannot be defeated by a tag being reused.
+            ROLLBACK_IMAGE=$(docker inspect ${{ env.CONTAINER_NAME }} \
+              --format '{{.Image}}' 2>/dev/null || echo "")
+            echo "🔖 rollback image: ${ROLLBACK_IMAGE:-none (first deploy)}"
+
+            # Port must be free or held by the container this deploy owns.
+            EXISTING_CONTAINER=$(docker ps --filter "publish=${{ env.DEPLOY_PORT }}" --format "{{.Names}}" | head -1)
+            if [ -n "$EXISTING_CONTAINER" ] && [ "$EXISTING_CONTAINER" != "${{ env.CONTAINER_NAME }}" ]; then
+              echo "::error::Port ${{ env.DEPLOY_PORT }} is held by '$EXISTING_CONTAINER', which this deploy does not own."
+              exit 1
+            fi
+
+            start_container() {
+              docker run -d \
+                --name ${{ env.CONTAINER_NAME }} \
+                --restart unless-stopped \
+                --network liberation-platform-network \
+                -p ${{ env.DEPLOY_PORT }}:8080 \
+                -e ENVIRONMENT=${{ env.ENVIRONMENT }} \
+                -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+                -e DATABASE_URL=postgres://liberation:${{ secrets.POSTGRES_PASSWORD }}@liberation-postgres:5432/liberation_analytics \
+                -e DUCKDB_PATH=/app/data/analytics.db \
+                -e ALLOWED_ORIGINS=https://greenfieldoverride.com,https://staging.greenfieldoverride.com,https://writewithstrata.app \
+                -v /mnt/analytics-volume/data:/app/data \
+                "$1"
+            }
+
+            # SIGTERM is handled and DuckDB checkpoints on close, so give it
+            # room. Killing it early leaves rows only in the write-ahead log.
+            echo "🔄 Replacing ${{ env.CONTAINER_NAME }}..."
+            docker stop -t 30 ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
             echo "🚀 Starting analytics container..."
-            docker run -d \
-              --name ${{ env.CONTAINER_NAME }} \
-              --restart unless-stopped \
-              --network liberation-platform-network \
-              -p ${{ env.DEPLOY_PORT }}:8080 \
-              -e ENVIRONMENT=${{ env.ENVIRONMENT }} \
-              -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-              -e DATABASE_URL=postgres://liberation:${{ secrets.POSTGRES_PASSWORD }}@liberation-postgres:5432/liberation_analytics \
-              -e DUCKDB_PATH=/app/data/analytics.db \
-              -e ALLOWED_ORIGINS=https://greenfieldoverride.com,https://staging.greenfieldoverride.com,https://writewithstrata.app \
-              -v /mnt/analytics-volume/data:/app/data \
-              liberation-analytics:${{ env.ENVIRONMENT }}-latest
-            
-            # Wait for analytics to be healthy
-            echo "⏳ Waiting for analytics to start..."
-            sleep 15
-            
-            # Health check
+            if ! start_container "liberation-analytics:${NEW_TAG}" >/dev/null; then
+              echo "::error::New container failed to start — restoring previous image"
+              docker rm -f ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+              [ -n "$ROLLBACK_IMAGE" ] && start_container "$ROLLBACK_IMAGE" >/dev/null && echo "↩️  restored"
+              exit 1
+            fi
+
             echo "🔍 Checking analytics health..."
-            for i in {1..10}; do
-              if curl -f -s http://localhost:${{ env.DEPLOY_PORT }}/api/health; then
-                echo "✅ Analytics is healthy!"
-                break
-              elif [ $i -eq 10 ]; then
-                echo "❌ Analytics health check failed"
-                docker logs ${{ env.CONTAINER_NAME }} --tail 20
-                exit 1
-              else
-                echo "⏳ Health check $i/10: waiting..."
-                sleep 5
+            healthy=false
+            for i in $(seq 1 20); do
+              if curl -f -s "http://localhost:${{ env.DEPLOY_PORT }}/api/health" >/dev/null 2>&1; then
+                healthy=true; break
               fi
+              sleep 3
             done
-            
-            # Clean up old analytics images
+
+            if [ "$healthy" != "true" ]; then
+              echo "::error::Health check failed — rolling back"
+              docker logs ${{ env.CONTAINER_NAME }} --tail 30 || true
+              docker stop -t 30 ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+              docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+              if [ -n "$ROLLBACK_IMAGE" ] && start_container "$ROLLBACK_IMAGE" >/dev/null; then
+                echo "↩️  restored previous image $ROLLBACK_IMAGE"
+              else
+                echo "⚠️  no previous image — analytics is DOWN"
+              fi
+              exit 1
+            fi
+            echo "✅ Analytics is healthy!"
+
+            # Move the environment tag only now that the new image is proven.
+            docker tag "liberation-analytics:${NEW_TAG}" "liberation-analytics:${{ env.ENVIRONMENT }}-latest"
+
+            # Prune only AFTER a verified success, and never the image the
+            # running container uses. Pruning before verification is what left
+            # this deploy with nothing to roll back to.
             echo "🧹 Cleaning up old analytics images..."
-            docker images liberation-analytics --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | \
-              grep -v REPOSITORY | \
-              grep "${{ env.ENVIRONMENT }}" | \
-              sort -k2 -r | \
-              tail -n +3 | \
-              awk '{print $1}' | \
-              xargs -r docker rmi || true
-            
+            RUNNING_IMAGE=$(docker inspect ${{ env.CONTAINER_NAME }} --format '{{.Image}}' 2>/dev/null || echo "")
+            docker images liberation-analytics --format '{{.ID}} {{.Tag}}' \
+              | grep "${{ env.ENVIRONMENT }}" \
+              | awk '{print $1}' | sort -u \
+              | grep -v "$(echo "$RUNNING_IMAGE" | sed 's/sha256://' | cut -c1-12)" \
+              | tail -n +3 \
+              | xargs -r docker rmi 2>/dev/null || true
+
             echo "✅ Liberation Analytics deployment complete!"
           EOF
 
