@@ -5,9 +5,9 @@ FROM ubuntu:22.04 AS builder
 RUN apt-get update && \
     apt-get install -y gcc g++ libc6-dev wget tar && \
     ARCH=$(dpkg --print-architecture) && \
-    wget https://go.dev/dl/go1.21.6.linux-${ARCH}.tar.gz && \
-    tar -C /usr/local -xzf go1.21.6.linux-${ARCH}.tar.gz && \
-    rm go1.21.6.linux-${ARCH}.tar.gz && \
+    wget https://go.dev/dl/go1.24.0.linux-${ARCH}.tar.gz && \
+    tar -C /usr/local -xzf go1.24.0.linux-${ARCH}.tar.gz && \
+    rm go1.24.0.linux-${ARCH}.tar.gz && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/usr/local/go/bin:${PATH}"
