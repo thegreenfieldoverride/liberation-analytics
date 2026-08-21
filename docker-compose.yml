@@ -18,7 +18,10 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      # -O /dev/null, not --spider. --spider issues a HEAD request, and
+      # /api/health is registered with .Methods("GET"), so gorilla/mux never
+      # matches it and the healthcheck fails against a healthy service.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
