@@ -1,0 +1,90 @@
+name: 🧪 CI - Test Pull Requests
+
+# main is protected and requires the "✅ CI Success" status check, but this
+# repository had no pull-request workflow at all — only deploy.yml, which runs
+# on push. Every PR was therefore permanently BLOCKED, waiting on a check that
+# nothing here could emit. The protection rule was copied from
+# liberation-platform; the workflow that satisfies it was not.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  build:
+    name: 🔨 Build & Vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Verify go.mod is tidy
+        # A stale go.mod makes `go test` exit 1 with a message that reads like
+        # advice rather than an error. That is what has been failing every
+        # deploy of this service.
+        run: |
+          cp go.mod /tmp/go.mod.orig
+          go mod tidy
+          if ! diff -q /tmp/go.mod.orig go.mod >/dev/null; then
+            echo "::error::go.mod is not tidy — run 'go mod tidy' and commit the result"
+            diff /tmp/go.mod.orig go.mod || true
+            exit 1
+          fi
+          echo "✅ go.mod is tidy"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✅ formatting clean"
+
+  test:
+    name: 🧪 Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run tests
+        # There are no test files yet; go test exits 0 and says so. This is
+        # here so that when tests do exist, they gate the merge.
+        run: go test ./...
+
+  ci-success:
+    name: ✅ CI Success
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.build.result }}" = "success" ] && \
+             [ "${{ needs.test.result }}" = "success" ]; then
+            echo "✅ All checks passed"
+          else
+            echo "❌ build=${{ needs.build.result }} test=${{ needs.test.result }}"
+            exit 1
+          fi
