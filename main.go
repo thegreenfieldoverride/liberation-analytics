@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
@@ -10,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -82,11 +85,43 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("🚀 Liberation Analytics Server starting on :%s", port)
-	log.Println("📊 Public endpoints: POST /api/events")
-	log.Println("🔒 Protected endpoints: GET /api/insights/*, GET /api/health")
-	log.Println("🔐 Admin endpoints: /api/admin/tokens")
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	srv := &http.Server{Addr: ":" + port, Handler: handler}
+
+	go func() {
+		log.Printf("🚀 Liberation Analytics Server starting on :%s", port)
+		log.Println("📊 Public endpoints: POST /api/events")
+		log.Println("🔒 Protected endpoints: GET /api/insights/*, GET /api/health")
+		log.Println("🔐 Admin endpoints: /api/admin/tokens")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("server error: ", err)
+		}
+	}()
+
+	// Wait for a termination signal.
+	//
+	// This previously ended in log.Fatal(http.ListenAndServe(...)), which is
+	// why the `defer server.Close()` above never ran once in nine months:
+	// log.Fatal calls os.Exit, and os.Exit does not run deferred functions.
+	// Neither did SIGTERM, because nothing was listening for it — `docker
+	// stop` returned in 0.287s with the DuckDB write-ahead log byte-identical.
+	//
+	// The consequence was not a leaked handle. DuckDB checkpoints the WAL into
+	// the database file on clean close; without one, every row lived only in
+	// the log. The database file sat at 12KB while the WAL held 15MB of data
+	// that no backup of the .db alone would have recovered.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	sig := <-stop
+	log.Printf("⏹️  received %s, shutting down", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("http shutdown: %v", err)
+	}
+
+	server.Close()
+	log.Println("✅ shutdown complete")
 }
 
 // databasePath returns where the DuckDB file should live.
@@ -361,6 +396,15 @@ func (s *AnalyticsServer) extractIP(r *http.Request) net.IP {
 
 func (s *AnalyticsServer) Close() {
 	if s.db != nil {
+		// Explicit CHECKPOINT before closing. sql.DB.Close alone is not a
+		// guarantee that DuckDB has folded the write-ahead log into the
+		// database file, and a database file without its WAL restores only
+		// what was last checkpointed.
+		if _, err := s.db.Exec("CHECKPOINT"); err != nil {
+			log.Printf("checkpoint failed: %v", err)
+		} else {
+			log.Println("💾 DuckDB checkpointed")
+		}
 		s.db.Close()
 	}
 	if s.geoIP != nil {
