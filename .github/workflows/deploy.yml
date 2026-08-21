@@ -89,13 +89,9 @@ jobs:
           fi
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.HETZNER_SSH_KEY }}
-
-      - name: Add server to known hosts
-        run: |
-          ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy Liberation Analytics
         env:
@@ -106,7 +102,12 @@ jobs:
           CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
           DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
         run: |
-          ssh $USER@$HOST << 'EOF'
+          # accept-new rather than a keyscan step: ssh-keyscan is itself
+          # trust-on-first-use, so writing its output to known_hosts bought no
+          # security over this and added a step that failed silently when
+          # ~/.ssh did not exist. Pin the host key as a secret if real MITM
+          # protection is ever wanted.
+          ssh -o StrictHostKeyChecking=accept-new $USER@$HOST << 'EOF'
             set -e
             
             echo "🚀 Deploying Liberation Analytics to ${{ env.ENVIRONMENT }}..."
