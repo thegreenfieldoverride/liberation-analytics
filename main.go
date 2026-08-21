@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,8 +35,9 @@ type LiberationEvent struct {
 
 // AnalyticsServer handles liberation analytics
 type AnalyticsServer struct {
-	db    *sql.DB
-	geoIP *geoip2.Reader
+	db        *sql.DB
+	geoIP     *geoip2.Reader
+	closeOnce sync.Once
 }
 
 func main() {
@@ -394,7 +396,16 @@ func (s *AnalyticsServer) extractIP(r *http.Request) net.IP {
 	return net.ParseIP(host)
 }
 
+// Close is safe to call more than once. It is invoked explicitly at the end
+// of main and again by the deferred call at the top — which, now that main no
+// longer ends in log.Fatal, actually runs. The second invocation used to log
+// "checkpoint failed: sql: database is closed", an error that is harmless but
+// reads like the checkpoint did not happen when it did.
 func (s *AnalyticsServer) Close() {
+	s.closeOnce.Do(s.closeOnce_do)
+}
+
+func (s *AnalyticsServer) closeOnce_do() {
 	if s.db != nil {
 		// Explicit CHECKPOINT before closing. sql.DB.Close alone is not a
 		// guarantee that DuckDB has folded the write-ahead log into the
