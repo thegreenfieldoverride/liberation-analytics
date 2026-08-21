@@ -148,18 +148,29 @@ jobs:
             sudo chown -R 1000:1000 /mnt/analytics-volume/data
             sudo chown -R 999:999 /mnt/postgres-volume/data
             
-            # Stop existing analytics containers
-            echo "🔄 Stopping existing analytics containers..."
+            # Replace ONLY this environment's container.
+            #
+            # This block also stopped and removed the literal name
+            # "liberation-analytics" — production — on every run, including
+            # staging deploys. CONTAINER_NAME is templated per environment
+            # precisely so the two do not collide, and the hardcoded lines
+            # defeated that. A staging deploy took production down.
+            echo "🔄 Replacing ${{ env.CONTAINER_NAME }}..."
             docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
             docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-            docker stop liberation-analytics 2>/dev/null || true
-            docker rm liberation-analytics 2>/dev/null || true
             
             # Clean up any containers using the port
             EXISTING_CONTAINER=$(docker ps --filter "publish=${{ env.DEPLOY_PORT }}" --format "{{.Names}}" | head -1)
             if [ -n "$EXISTING_CONTAINER" ]; then
-              echo "🔄 Removing container using port ${{ env.DEPLOY_PORT }}: $EXISTING_CONTAINER"
-              docker rm -f "$EXISTING_CONTAINER" || true
+              # Refuse to evict a container this deploy does not own. Whatever
+              # holds the port may be another environment, and force-removing
+              # it is how a staging run reaches production a second way.
+              if [ "$EXISTING_CONTAINER" = "${{ env.CONTAINER_NAME }}" ]; then
+                docker rm -f "$EXISTING_CONTAINER" || true
+              else
+                echo "::error::Port ${{ env.DEPLOY_PORT }} is held by '$EXISTING_CONTAINER', which this deploy does not own."
+                exit 1
+              fi
             fi
             
             # Build new analytics image
