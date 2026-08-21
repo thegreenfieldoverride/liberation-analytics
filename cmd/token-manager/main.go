@@ -56,8 +56,16 @@ func createToken(name, permissions, expires string) {
 	}
 	token := "analytics_" + hex.EncodeToString(bytes)
 
-	// Open database and insert token
-	db, err := sql.Open("duckdb", "./analytics.db")
+	// Open database and insert token.
+	//
+	// Must resolve the same path as the server, or tokens get written to a
+	// different database than the one doing the authenticating — which looks
+	// exactly like "the token doesn't work".
+	dbPath := os.Getenv("DUCKDB_PATH")
+	if dbPath == "" {
+		dbPath = "./analytics.db"
+	}
+	db, err := sql.Open("duckdb", dbPath)
 	if err != nil {
 		log.Fatal("Failed to open database:", err)
 	}
