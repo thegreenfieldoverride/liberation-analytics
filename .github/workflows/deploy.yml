@@ -86,10 +86,18 @@ jobs:
             # deploys — which is how a staging deploy took production down.
             # Removing that line exposed the mismatch rather than causing it.
             echo "CONTAINER_NAME=liberation-analytics" >> $GITHUB_ENV
+            echo "DATA_DIR=/mnt/analytics-volume/data" >> $GITHUB_ENV
             echo "ENVIRONMENT=production" >> $GITHUB_ENV
             echo "IMAGE_TAG=main" >> $GITHUB_ENV
           else
             echo "DEPLOY_PORT=8081" >> $GITHUB_ENV
+            # Staging gets its own DuckDB file. It previously mounted
+            # /mnt/analytics-volume/data — the production database. DuckDB
+            # permits a single writer, so whichever container started first
+            # locked the other out. A push to main auto-deploys staging, so
+            # merging a PR could and did put production into a restart loop
+            # with "Conflicting lock is held in PID 0".
+            echo "DATA_DIR=/mnt/analytics-volume/staging-data" >> $GITHUB_ENV
             echo "CONTAINER_NAME=liberation-analytics-staging" >> $GITHUB_ENV
             echo "ENVIRONMENT=staging" >> $GITHUB_ENV
             echo "IMAGE_TAG=main" >> $GITHUB_ENV
@@ -150,9 +158,9 @@ jobs:
             
             # Ensure proper volume permissions
             echo "📁 Setting up data volumes..."
-            sudo mkdir -p /mnt/analytics-volume/data
+            sudo mkdir -p ${{ env.DATA_DIR }}
             sudo mkdir -p /mnt/postgres-volume/data
-            sudo chown -R 1000:1000 /mnt/analytics-volume/data
+            sudo chown -R 1000:1000 ${{ env.DATA_DIR }}
             sudo chown -R 999:999 /mnt/postgres-volume/data
             
             # Replace ONLY this environment's container.
@@ -205,7 +213,7 @@ jobs:
                 -e DATABASE_URL=postgres://liberation:${{ secrets.POSTGRES_PASSWORD }}@liberation-postgres:5432/liberation_analytics \
                 -e DUCKDB_PATH=/app/data/analytics.db \
                 -e ALLOWED_ORIGINS=https://greenfieldoverride.com,https://staging.greenfieldoverride.com,https://writewithstrata.app \
-                -v /mnt/analytics-volume/data:/app/data \
+                -v ${{ env.DATA_DIR }}:/app/data \
                 "$1"
             }
 
