@@ -89,9 +89,25 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
 
+// databasePath returns where the DuckDB file should live.
+//
+// This used to be the literal "./analytics.db", which resolves inside the
+// container's writable layer. DUCKDB_PATH was set correctly in the container
+// environment and pointed at a mounted 30GB volume; nothing read it. Ten
+// months of events accumulated somewhere any redeploy would have destroyed,
+// and the volume stayed empty.
+func databasePath() string {
+	if p := os.Getenv("DUCKDB_PATH"); p != "" {
+		return p
+	}
+	return "./analytics.db"
+}
+
 func NewAnalyticsServer() (*AnalyticsServer, error) {
 	// Initialize DuckDB
-	db, err := sql.Open("duckdb", "./analytics.db")
+	dbPath := databasePath()
+	log.Printf("📁 DuckDB path: %s", dbPath)
+	db, err := sql.Open("duckdb", dbPath)
 	if err != nil {
 		return nil, err
 	}
