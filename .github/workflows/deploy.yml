@@ -212,7 +212,7 @@ jobs:
                 -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
                 -e DATABASE_URL=postgres://liberation:${{ secrets.POSTGRES_PASSWORD }}@liberation-postgres:5432/liberation_analytics \
                 -e DUCKDB_PATH=/app/data/analytics.db \
-                -e ALLOWED_ORIGINS=https://greenfieldoverride.com,https://staging.greenfieldoverride.com,https://writewithstrata.app \
+                -e ALLOWED_ORIGINS=https://greenfieldoverride.com,https://staging.greenfieldoverride.com,https://writewithstrata.app,https://alyssapowell.com \
                 -v ${{ env.DATA_DIR }}:/app/data \
                 "$1"
             }
