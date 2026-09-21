@@ -26,15 +26,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          # See ci.yml: pin the toolchain in go.mod only. A '1.21' here against
+          # a go.mod requiring 1.24 is the drift that broke the Dockerfile.
+          go-version-file: go.mod
 
       - name: Cache Go modules
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -104,7 +106,7 @@ jobs:
           fi
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.1
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.HETZNER_SSH_KEY }}
 
