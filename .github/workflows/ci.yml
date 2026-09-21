@@ -17,12 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          # Read the version from go.mod rather than pinning it here. This said
+          # '1.21' against a go.mod requiring 1.24, and only passed because
+          # GOTOOLCHAIN defaults to auto and silently downloaded 1.24 on every
+          # run. The Dockerfile carried the same stale pin without that rescue,
+          # and the build failure took analytics down on 2026-08-21. One pin,
+          # in go.mod, is the fix for the class.
+          go-version-file: go.mod
           cache: true
 
       - name: Verify go.mod is tidy
@@ -60,12 +66,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          go-version-file: go.mod
           cache: true
 
       - name: Run tests
